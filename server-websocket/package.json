@@ -1,0 +1,14 @@
+{
+  "name": "server-websocket",
+  "version": "1.0.0",
+  "description": "WebSocket (ws) server for real-time protocol benchmark",
+  "main": "echo-test_index.js",
+  "scripts": {
+    "echo": "node echo-test_index.js",
+    "broadcast": "node broadcast-test_index.js"
+  },
+  "dependencies": {
+    "csv-writer": "^1.6.0",
+    "ws": "^8.18.3"
+  }
+}

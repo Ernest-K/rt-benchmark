@@ -1,0 +1,35 @@
+{
+  "name": "rt-benchmark",
+  "version": "1.0.0",
+  "description": "Real-time protocol benchmark: SSE, WebSocket, WebRTC, WebTransport (streams + datagrams)",
+  "type": "module",
+  "scripts": {
+    "install:all": "npm run install:sse && npm run install:websocket && npm run install:webrtc && npm run install:webtransport && npm run install:client",
+    "install:sse":           "cd server-sse && npm install",
+    "install:websocket":     "cd server-websocket && npm install",
+    "install:webrtc":        "cd server-webrtc && npm install",
+    "install:webtransport":  "cd server-webtransport && npm install",
+    "install:client":        "cd client-simulator && npm install",
+
+    "bench":           "node run-benchmark.js --test both",
+    "bench:echo":      "node run-benchmark.js --test echo",
+    "bench:broadcast": "node run-benchmark.js --test broadcast",
+    "bench:quick":     "node run-benchmark.js --test both --loads 100,200 --runs 1 --duration 30",
+    "bench:dry":       "node run-benchmark.js --dry-run",
+
+    "server:sse:echo":           "cd server-sse && node echo-test_index.js sse 100",
+    "server:sse:broadcast":      "cd server-sse && node broadcast-test_index.js",
+    "server:websocket:echo":     "cd server-websocket && node echo-test_index.js websocket 100",
+    "server:websocket:broadcast":"cd server-websocket && node broadcast-test_index.js",
+    "server:webrtc:echo":        "cd server-webrtc && node echo-test_index.js webrtc 100",
+    "server:webrtc:broadcast":   "cd server-webrtc && node broadcast-test_index.js",
+    "server:webtransport:echo":  "cd server-webtransport && node echo-test_index.js webtransport-streams 100",
+    "server:webtransport:broadcast": "cd server-webtransport && node broadcast-test_index.js",
+
+    "client:echo":      "cd client-simulator && node echo-test_client-simulator.js",
+    "client:broadcast": "cd client-simulator && node broadcast-test_client-simulator.js"
+  },
+  "keywords": ["benchmark", "websocket", "sse", "webrtc", "webtransport", "real-time"],
+  "author": "",
+  "license": "MIT"
+}

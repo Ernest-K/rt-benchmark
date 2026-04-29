@@ -1,0 +1,6 @@
+node_modules/
+results/echo-test/*.csv
+results/broadcast-test/*.csv
+*.pem
+*.key
+.env

@@ -1,0 +1,14 @@
+{
+  "name": "server-webrtc",
+  "version": "1.0.0",
+  "description": "WebRTC (node-datachannel) server for real-time protocol benchmark",
+  "main": "echo-test_index.js",
+  "scripts": {
+    "echo": "node echo-test_index.js",
+    "broadcast": "node broadcast-test_index.js"
+  },
+  "dependencies": {
+    "csv-writer": "^1.6.0",
+    "node-datachannel": "^0.32.3"
+  }
+}

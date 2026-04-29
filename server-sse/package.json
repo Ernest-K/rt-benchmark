@@ -1,0 +1,13 @@
+{
+  "name": "server-sse",
+  "version": "1.0.0",
+  "description": "SSE server for real-time protocol benchmark",
+  "main": "echo-test_index.js",
+  "scripts": {
+    "echo": "node echo-test_index.js",
+    "broadcast": "node broadcast-test_index.js"
+  },
+  "dependencies": {
+    "csv-writer": "^1.6.0"
+  }
+}
