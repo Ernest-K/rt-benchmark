@@ -25,7 +25,8 @@ if (!serverId || !clientLoad) {
 
 const HTTP_PORT = 3000; // HTTPS: fingerprint endpoint
 const WT_PORT = 4433; // HTTP/3 WebTransport
-const HOST = "localhost";
+//const HOST = "localhost"; // for local testing
+const HOST = "0.0.0.0";
 const MKCERT_CERT = path.join(__dirname, "localhost.pem");
 const MKCERT_KEY = path.join(__dirname, "localhost-key.pem");
 
