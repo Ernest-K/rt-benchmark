@@ -5,13 +5,13 @@ export const CONFIG = {
     // Protocol to test:
     //   'sse' | 'websocket' | 'webrtc' |
     //   'webtransport-streams' | 'webtransport-datagrams'
-    PROTOCOL: process.env.PROTOCOL || "webrtc",
+    PROTOCOL: process.env.PROTOCOL || "websocket",
 
     // Identifier used in output CSV filenames  (e.g. "websocket", "sse", "webrtc")
-    SERVER_ID: process.env.SERVER_ID || "webrtc",
+    SERVER_ID: process.env.SERVER_ID || "websocket",
 
     // Number of concurrent simulated clients
-    NUM_CLIENTS: parseInt(process.env.NUM_CLIENTS || "1", 10),
+    NUM_CLIENTS: parseInt(process.env.NUM_CLIENTS || "1000", 10),
 
     // How long each test phase runs (seconds)
     TEST_DURATION_SECONDS: parseInt(process.env.TEST_DURATION_SECONDS || "10", 10),

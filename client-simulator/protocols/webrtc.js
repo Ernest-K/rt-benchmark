@@ -48,12 +48,27 @@ async function buildConnection(id, config) {
     const connectionStart = process.hrtime.bigint();
 
     const pc = new nodeDataChannel.PeerConnection(`client-${id}`, { iceServers: [] });
+
+    // ⚠️ Listeners PRZED createDataChannel — inaczej event odpala się za wcześnie
+    const localDescPromise = new Promise((resolve, reject) => {
+        const t = setTimeout(() => reject(new Error("SDP gather timeout")), 8000);
+        pc.onLocalDescription((sdp, type) => {
+            clearTimeout(t);
+            resolve({ sdp, type });
+        });
+    });
+
+    const localCandidates = [];
+    pc.onLocalCandidate((candidate, mid) => localCandidates.push({ candidate, mid }));
+
+    // Dopiero teraz — triggeruje generowanie oferty
     const dc = pc.createDataChannel("benchmark");
 
-    // Collect local SDP in parallel with candidate gathering
-    const [localDesc, localCandidates] = await Promise.all([gatherLocalSDP(pc), gatherCandidates(pc)]);
+    // Czekaj na SDP, potem chwilę na kandydatów ICE
+    const localDesc = await localDescPromise;
+    await new Promise((r) => setTimeout(r, CANDIDATE_GATHER_MS));
 
-    // Exchange SDP with server
+    // Wymiana SDP z serwerem
     const answer = await signal(config.WEBRTC_SIGNAL_URL, {
         clientId: id,
         sdp: localDesc.sdp,
@@ -61,7 +76,6 @@ async function buildConnection(id, config) {
         candidates: localCandidates,
     });
 
-    // Apply server answer
     pc.setRemoteDescription(answer.sdp, answer.type);
     for (const c of answer.candidates || []) {
         try {
@@ -69,7 +83,6 @@ async function buildConnection(id, config) {
         } catch (_) {}
     }
 
-    // Wait for DataChannel to open
     await new Promise((resolve, reject) => {
         const t = setTimeout(() => reject(new Error("DC open timeout")), DC_OPEN_TIMEOUT_MS);
         dc.onOpen(() => {

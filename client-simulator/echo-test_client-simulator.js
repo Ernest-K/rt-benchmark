@@ -7,10 +7,10 @@
 // Usage (via environment variables):
 //   PROTOCOL=websocket SERVER_ID=websocket NUM_CLIENTS=100 node echo-test_client-simulator.js
 
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { CONFIG } from './config.js';
-import { getLocalTimestamp, sleep, makeCsvWriter, pLimit } from './utils.js';
+import path from "path";
+import { fileURLToPath } from "url";
+import { CONFIG } from "./config.js";
+import { getLocalTimestamp, sleep, makeCsvWriter, pLimit } from "./utils.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,25 +18,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const protocolModule = await import(`./protocols/${CONFIG.PROTOCOL}.js`);
 
 // ── CSV writers ───────────────────────────────────────────────────────────────
-const echoDir = path.resolve(__dirname, CONFIG.OUTPUT_DIR, 'echo-test');
+const echoDir = path.resolve(__dirname, CONFIG.OUTPUT_DIR, "echo-test");
 
-const rttWriter = makeCsvWriter(
-    path.join(echoDir, `rtt_${CONFIG.SERVER_ID}_${CONFIG.NUM_CLIENTS}clients.csv`),
-    [
-        { id: 'timestamp',        title: 'TIMESTAMP' },
-        { id: 'client_id',        title: 'CLIENT_ID' },
-        { id: 'round_trip_time_ms', title: 'RTT_MS' },
-    ],
-);
+const rttWriter = makeCsvWriter(path.join(echoDir, `rtt_${CONFIG.SERVER_ID}_${CONFIG.NUM_CLIENTS}clients.csv`), [
+    { id: "timestamp", title: "TIMESTAMP" },
+    { id: "client_id", title: "CLIENT_ID" },
+    { id: "round_trip_time_ms", title: "RTT_MS" },
+]);
 
-const connWriter = makeCsvWriter(
-    path.join(echoDir, `conn-time_${CONFIG.SERVER_ID}_${CONFIG.NUM_CLIENTS}clients.csv`),
-    [
-        { id: 'timestamp',          title: 'TIMESTAMP' },
-        { id: 'client_id',          title: 'CLIENT_ID' },
-        { id: 'connection_time_ms', title: 'CONNECTION_TIME_MS' },
-    ],
-);
+const connWriter = makeCsvWriter(path.join(echoDir, `conn-time_${CONFIG.SERVER_ID}_${CONFIG.NUM_CLIENTS}clients.csv`), [
+    { id: "timestamp", title: "TIMESTAMP" },
+    { id: "client_id", title: "CLIENT_ID" },
+    { id: "connection_time_ms", title: "CONNECTION_TIME_MS" },
+]);
 
 // ── Active connections (for cleanup) ──────────────────────────────────────────
 const activeClients = [];
@@ -53,36 +47,36 @@ async function createEchoClient(id) {
 
     activeClients.push(client);
 
-    // Log connection time
-    connWriter.writeRecords([{
-        timestamp:          getLocalTimestamp(),
-        client_id:          id,
-        connection_time_ms: client.connectionTimeMs.toFixed(3),
-    }]).catch(() => {});
+    connWriter
+        .writeRecords([
+            {
+                timestamp: getLocalTimestamp(),
+                client_id: id,
+                connection_time_ms: client.connectionTimeMs.toFixed(3),
+            },
+        ])
+        .catch(() => {});
 
-    // Echo loop: on message → record RTT → immediately send next
-    let sendTime;
-
+    // ⚠️ Tylko rejestruj handler — NIE startuj sendNext() tutaj
     client.onMessage((msg) => {
-        const rttMs = Number(process.hrtime.bigint() - sendTime) / 1_000_000;
-        rttWriter.writeRecords([{
-            timestamp:          getLocalTimestamp(),
-            client_id:          id,
-            round_trip_time_ms: rttMs.toFixed(3),
-        }]).catch(() => {});
-
-        // Send next message immediately after receiving echo
-        sendNext();
+        const rttMs = Number(process.hrtime.bigint() - client._sendTime) / 1_000_000;
+        rttWriter
+            .writeRecords([
+                {
+                    timestamp: getLocalTimestamp(),
+                    client_id: id,
+                    round_trip_time_ms: rttMs.toFixed(3),
+                },
+            ])
+            .catch(() => {});
+        client._sendNext();
     });
 
-    function sendNext() {
-        sendTime = process.hrtime.bigint();
-        const payload = JSON.stringify({ sendTime: sendTime.toString(), clientId: id });
-        client.send(payload);
-    }
-
-    // Kick off the first message
-    sendNext();
+    // Przechowaj sendNext na kliencie żeby handler mógł go wywołać
+    client._sendNext = () => {
+        client._sendTime = process.hrtime.bigint();
+        client.send(JSON.stringify({ sendTime: client._sendTime.toString(), clientId: id }));
+    };
 
     return client;
 }
@@ -95,48 +89,52 @@ async function main() {
     const ids = Array.from({ length: CONFIG.NUM_CLIENTS }, (_, i) => i);
 
     // WebRTC needs a lower concurrency during the expensive SDP handshake
-    const concurrency = CONFIG.PROTOCOL === 'webrtc'
-        ? CONFIG.WEBRTC_CONCURRENCY
-        : CONFIG.NUM_CLIENTS;
+    const concurrency = CONFIG.PROTOCOL === "webrtc" ? CONFIG.WEBRTC_CONCURRENCY : CONFIG.NUM_CLIENTS;
 
     // Connect all clients (with optional delay between each)
     const connectionPromises = [];
     for (let i = 0; i < CONFIG.NUM_CLIENTS; i++) {
         connectionPromises.push(
             (async (id) => {
-                if (CONFIG.CLIENT_CONNECT_DELAY_MS > 0 && CONFIG.PROTOCOL !== 'webrtc') {
+                if (CONFIG.CLIENT_CONNECT_DELAY_MS > 0 && CONFIG.PROTOCOL !== "webrtc") {
                     await sleep(id * CONFIG.CLIENT_CONNECT_DELAY_MS);
                 }
                 return createEchoClient(id);
-            })(i)
+            })(i),
         );
 
         // For WebRTC: limit concurrent handshakes
-        if (CONFIG.PROTOCOL === 'webrtc' && (i + 1) % concurrency === 0) {
+        if (CONFIG.PROTOCOL === "webrtc" && (i + 1) % concurrency === 0) {
             await Promise.allSettled(connectionPromises.slice(i + 1 - concurrency, i + 1));
         }
     }
 
     const results = await Promise.allSettled(connectionPromises);
-    const succeeded = results.filter(r => r.status === 'fulfilled' && r.value !== null).length;
+    const connected = activeClients.filter(Boolean);
+    const succeeded = connected.length;
+    console.log(`✅ ${succeeded}/${CONFIG.NUM_CLIENTS} clients connected. Echo test starting...\n`);
 
-    console.log(`✅ ${succeeded}/${CONFIG.NUM_CLIENTS} clients connected. Echo test running...\n`);
+    for (const client of connected) {
+        client._sendNext();
+    }
 
     // Run for the configured duration
     await sleep(CONFIG.TEST_DURATION_SECONDS * 1000);
 
-    console.log('\n⌛ Test duration finished. Closing all clients...');
+    console.log("\n⌛ Test duration finished. Closing all clients...");
     for (const c of activeClients) {
-        try { c.close(); } catch (_) {}
+        try {
+            c.close();
+        } catch (_) {}
     }
 
-    console.log('✅ Echo test complete.\n');
+    console.log("✅ Echo test complete.\n");
     // Give CSV writers a moment to flush
     await sleep(1500);
     process.exit(0);
 }
 
-main().catch(err => {
-    console.error('Fatal error:', err);
+main().catch((err) => {
+    console.error("Fatal error:", err);
     process.exit(1);
 });
