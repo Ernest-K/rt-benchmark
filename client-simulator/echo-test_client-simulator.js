@@ -35,6 +35,9 @@ const connWriter = makeCsvWriter(path.join(echoDir, `conn-time_${CONFIG.SERVER_I
 // ── Active connections (for cleanup) ──────────────────────────────────────────
 const activeClients = [];
 
+const rttBuffer = [];
+const connBuffer = [];
+
 // ── Client factory ────────────────────────────────────────────────────────────
 async function createEchoClient(id) {
     let client;
@@ -47,29 +50,22 @@ async function createEchoClient(id) {
 
     activeClients.push(client);
 
-    connWriter
-        .writeRecords([
-            {
-                timestamp: getLocalTimestamp(),
-                client_id: id,
-                connection_time_ms: client.connectionTimeMs.toFixed(3),
-            },
-        ])
-        .catch(() => {});
-
     // ⚠️ Tylko rejestruj handler — NIE startuj sendNext() tutaj
     client.onMessage((msg) => {
         const rttMs = Number(process.hrtime.bigint() - client._sendTime) / 1_000_000;
-        rttWriter
-            .writeRecords([
-                {
-                    timestamp: getLocalTimestamp(),
-                    client_id: id,
-                    round_trip_time_ms: rttMs.toFixed(3),
-                },
-            ])
-            .catch(() => {});
+        // Tylko push do bufora, zero I/O na gorącej ścieżce
+        rttBuffer.push({
+            timestamp: getLocalTimestamp(),
+            client_id: id,
+            round_trip_time_ms: rttMs.toFixed(3),
+        });
         client._sendNext();
+    });
+
+    connBuffer.push({
+        timestamp: getLocalTimestamp(),
+        client_id: id,
+        connection_time_ms: client.connectionTimeMs.toFixed(3),
     });
 
     // Przechowaj sendNext na kliencie żeby handler mógł go wywołać
@@ -128,8 +124,10 @@ async function main() {
         } catch (_) {}
     }
 
-    console.log("✅ Echo test complete.\n");
-    // Give CSV writers a moment to flush
+    console.log("💾 Saving results...");
+    await rttWriter.writeRecords(rttBuffer);
+    await connWriter.writeRecords(connBuffer);
+
     await sleep(1500);
     process.exit(0);
 }
