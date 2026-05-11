@@ -7,12 +7,17 @@
 // Usage (via environment variables):
 //   PROTOCOL=websocket SERVER_ID=websocket NUM_CLIENTS=100 node echo-test_client-simulator.js
 
+import { fork } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
 import { CONFIG } from "./config.js";
 import { getLocalTimestamp, sleep, makeCsvWriter, pLimit } from "./utils.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Ile wątków — 1 wątek na ~100 klientów
+const NUM_WORKERS = Math.ceil(CONFIG.NUM_CLIENTS / 100);
+const PER_WORKER = Math.ceil(CONFIG.NUM_CLIENTS / NUM_WORKERS);
 
 // ── Protocol client ───────────────────────────────────────────────────────────
 const protocolModule = await import(`./protocols/${CONFIG.PROTOCOL}.js`);
@@ -50,15 +55,18 @@ async function createEchoClient(id) {
 
     activeClients.push(client);
 
-    // ⚠️ Tylko rejestruj handler — NIE startuj sendNext() tutaj
+    // Zapisuj co N-tą wiadomość żeby nie wysadzić RAM-u
+    let msgCount = 0;
     client.onMessage((msg) => {
         const rttMs = Number(process.hrtime.bigint() - client._sendTime) / 1_000_000;
         // Tylko push do bufora, zero I/O na gorącej ścieżce
-        rttBuffer.push({
-            timestamp: getLocalTimestamp(),
-            client_id: id,
-            round_trip_time_ms: rttMs.toFixed(3),
-        });
+        if (++msgCount % 10 === 0) {
+            rttBuffer.push({
+                timestamp: getLocalTimestamp(),
+                client_id: id,
+                round_trip_time_ms: rttMs.toFixed(3),
+            });
+        }
         client._sendNext();
     });
 
@@ -79,56 +87,83 @@ async function createEchoClient(id) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
-    console.log(`\n🚀 Echo Test — Protocol: ${CONFIG.PROTOCOL}  |  Clients: ${CONFIG.NUM_CLIENTS}`);
-    console.log(`⏳ Duration: ${CONFIG.TEST_DURATION_SECONDS}s  |  Delay between connects: ${CONFIG.CLIENT_CONNECT_DELAY_MS}ms\n`);
+    console.log(`\n🚀 Echo Test — Protocol: ${CONFIG.PROTOCOL} | Clients: ${CONFIG.NUM_CLIENTS} | Workers: ${NUM_WORKERS}`);
 
-    const ids = Array.from({ length: CONFIG.NUM_CLIENTS }, (_, i) => i);
+    const workers = [];
+    const allRtt = [];
+    const allConn = [];
 
-    // WebRTC needs a lower concurrency during the expensive SDP handshake
-    const concurrency = CONFIG.PROTOCOL === "webrtc" ? CONFIG.WEBRTC_CONCURRENCY : CONFIG.NUM_CLIENTS;
+    // Wystartuj workery
+    for (let w = 0; w < NUM_WORKERS; w++) {
+        const start = w * PER_WORKER;
+        const end = Math.min(start + PER_WORKER, CONFIG.NUM_CLIENTS);
+        const clientIds = Array.from({ length: end - start }, (_, i) => start + i);
 
-    // Connect all clients (with optional delay between each)
-    const connectionPromises = [];
-    for (let i = 0; i < CONFIG.NUM_CLIENTS; i++) {
-        connectionPromises.push(
-            (async (id) => {
-                if (CONFIG.CLIENT_CONNECT_DELAY_MS > 0 && CONFIG.PROTOCOL !== "webrtc") {
-                    await sleep(id * CONFIG.CLIENT_CONNECT_DELAY_MS);
+        await new Promise((resolve, reject) => {
+            const worker = fork(
+                path.join(__dirname, "worker.js"),
+                [], // args
+                {
+                    env: { ...process.env },
+                    // Przekaż workerData przez env zamiast workerData:
+                    env: {
+                        ...process.env,
+                        WORKER_DATA: JSON.stringify({
+                            clientIds,
+                            config: CONFIG,
+                            protocolName: CONFIG.PROTOCOL,
+                        }),
+                    },
+                },
+            );
+
+            workers.push(worker);
+
+            worker.on("message", (msg) => {
+                if (msg.type === "log") console.log(msg.text);
+                if (msg.type === "ready") resolve(msg.count);
+                if (msg.type === "results") {
+                    for (const r of msg.rttBuffer) allRtt.push(r);
+                    for (const r of msg.connBuffer) allConn.push(r);
                 }
-                return createEchoClient(id);
-            })(i),
-        );
-
-        // For WebRTC: limit concurrent handshakes
-        if (CONFIG.PROTOCOL === "webrtc" && (i + 1) % concurrency === 0) {
-            await Promise.allSettled(connectionPromises.slice(i + 1 - concurrency, i + 1));
-        }
+            });
+            worker.on("error", reject);
+            worker.on("exit", (code) => {
+                if (code !== 0) reject(new Error(`Worker exited with code ${code}`));
+            });
+        });
     }
 
-    const results = await Promise.allSettled(connectionPromises);
-    const connected = activeClients.filter(Boolean);
-    const succeeded = connected.length;
-    console.log(`✅ ${succeeded}/${CONFIG.NUM_CLIENTS} clients connected. Echo test starting...\n`);
+    const succeeded = workers.length * PER_WORKER;
+    console.log(`✅ ~${succeeded}/${CONFIG.NUM_CLIENTS} clients connected. Starting echo...\n`);
 
-    for (const client of connected) {
-        client._sendNext();
-    }
+    // Daj sygnał start wszystkim workerom
+    for (const w of workers) w.send("start");
 
-    // Run for the configured duration
     await sleep(CONFIG.TEST_DURATION_SECONDS * 1000);
 
-    console.log("\n⌛ Test duration finished. Closing all clients...");
-    for (const c of activeClients) {
-        try {
-            c.close();
-        } catch (_) {}
-    }
+    console.log("\n⌛ Test finished. Collecting results...");
+
+    // Zbierz wyniki ze wszystkich workerów
+    await Promise.all(
+        workers.map(
+            (w) =>
+                new Promise((resolve) => {
+                    w.on("message", (msg) => {
+                        if (msg.type === "results") resolve();
+                    });
+                    w.send("stop");
+                }),
+        ),
+    );
 
     console.log("💾 Saving results...");
-    await rttWriter.writeRecords(rttBuffer);
-    await connWriter.writeRecords(connBuffer);
+    await rttWriter.writeRecords(allRtt);
+    await connWriter.writeRecords(allConn);
 
-    await sleep(1500);
+    for (const w of workers) w.kill();
+
+    console.log("✅ Echo test complete.\n");
     process.exit(0);
 }
 
