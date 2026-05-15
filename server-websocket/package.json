@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "csv-writer": "^1.6.0",
+    "pidusage": "^4.0.1",
     "ws": "^8.18.3"
   }
 }
